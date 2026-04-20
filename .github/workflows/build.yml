@@ -49,12 +49,27 @@ jobs:
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # Generate self-signed certificate
+          # Generate self-signed code signing certificate with proper extensions
+          cat > "$RUNNER_TEMP/cert.conf" <<CONF
+          [req]
+          distinguished_name = req_dn
+          x509_extensions = codesign_ext
+          prompt = no
+
+          [req_dn]
+          CN = RMenu Development
+
+          [codesign_ext]
+          keyUsage = critical, digitalSignature
+          extendedKeyUsage = codeSigning
+          basicConstraints = critical, CA:false
+          CONF
+
           openssl req -x509 -newkey rsa:2048 \
             -keyout "$RUNNER_TEMP/key.pem" \
             -out "$RUNNER_TEMP/cert.pem" \
             -days 1 -nodes \
-            -subj "/CN=RMenu Development"
+            -config "$RUNNER_TEMP/cert.conf"
 
           openssl pkcs12 -export \
             -out "$RUNNER_TEMP/cert.p12" \
@@ -72,9 +87,13 @@ jobs:
             -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          # Verify certificate is available
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
           # Cleanup sensitive files
-          rm -f "$RUNNER_TEMP/key.pem" "$RUNNER_TEMP/cert.pem" "$RUNNER_TEMP/cert.p12"
+          rm -f "$RUNNER_TEMP/key.pem" "$RUNNER_TEMP/cert.pem" "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/cert.conf"
 
       - name: Build
         run: |
