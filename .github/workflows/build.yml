@@ -1,0 +1,109 @@
+name: Build & Package DMG
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label (e.g. v1.0.0)"
+        required: false
+        default: "dev"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+          elif [[ -n "${{ github.event.inputs.version }}" && "${{ github.event.inputs.version }}" != "dev" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Setup code signing
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+
+          # Create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Generate self-signed certificate
+          openssl req -x509 -newkey rsa:2048 \
+            -keyout "$RUNNER_TEMP/key.pem" \
+            -out "$RUNNER_TEMP/cert.pem" \
+            -days 1 -nodes \
+            -subj "/CN=RMenu Development"
+
+          openssl pkcs12 -export \
+            -out "$RUNNER_TEMP/cert.p12" \
+            -inkey "$RUNNER_TEMP/key.pem" \
+            -in "$RUNNER_TEMP/cert.pem" \
+            -passout pass:ci-temp
+
+          # Import certificate into keychain
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN_PATH" -P ci-temp \
+            -T /usr/bin/codesign -T /usr/bin/security
+
+          security set-key-partition-list \
+            -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          # Cleanup sensitive files
+          rm -f "$RUNNER_TEMP/key.pem" "$RUNNER_TEMP/cert.pem" "$RUNNER_TEMP/cert.p12"
+
+      - name: Build
+        run: |
+          xcodebuild \
+            -project RMenu.xcodeproj \
+            -scheme RMenu \
+            -configuration Release \
+            build \
+            CODE_SIGN_IDENTITY="RMenu Development" \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
+            CONFIGURATION_BUILD_DIR="$(pwd)/build"
+
+      - name: Create DMG
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DMG_NAME="RMenu-${VERSION}.dmg"
+          ./scripts/create-dmg.sh build/RMenu.app "build/$DMG_NAME"
+          echo "DMG_NAME=$DMG_NAME" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DMG_NAME }}
+          path: build/${{ env.DMG_NAME }}
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/${{ env.DMG_NAME }}
+          generate_release_notes: true

@@ -1,0 +1,13 @@
+# Xcode
+build/
+*.xcodeproj
+xcuserdata/
+DerivedData/
+*.xcworkspace
+
+# macOS
+.DS_Store
+
+# Certificates
+*.pem
+*.p12
