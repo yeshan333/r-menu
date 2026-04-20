@@ -2,6 +2,12 @@
 
 macOS Finder 右键菜单增强工具。基于 Finder Sync Extension，为 Finder 右键菜单添加快速打开应用、复制路径等实用功能。
 
+## 截图
+
+| 菜单栏管理 | Finder 右键菜单 |
+|:---:|:---:|
+| ![菜单栏](screenshots/menubar.png) | ![右键菜单](screenshots/context-menu.png) |
+
 ## 功能
 
 - **快速打开应用** - 右键直接通过 VSCode、Zed、Warp、Kaku 等应用打开文件/文件夹（自动检测已安装应用，显示对应图标）
